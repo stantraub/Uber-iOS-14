@@ -7,10 +7,13 @@
 
 import UIKit
 import Firebase
+import GeoFire
 
 class RegistrationController: UIViewController {
     
     // MARK: - Properties
+    
+    private var location = LocationHandler.shared.locationManager.location
     
     private let titleLabel: UILabel = {
         let label = UILabel()
@@ -108,7 +111,7 @@ class RegistrationController: UIViewController {
         guard let fullname = fullnameTextField.text else { return }
         let accountTypeIndex = accountTypeSegmentedControl.selectedSegmentIndex
         
-        Auth.auth().createUser(withEmail: email, password: password) { result, error in
+        Auth.auth().createUser(withEmail: email, password: password) { [weak self] result, error in
             if let error = error {
                 print("DEBUG: Failed to register user with error \(error.localizedDescription)")
                 return
@@ -120,15 +123,29 @@ class RegistrationController: UIViewController {
                           "fullname": fullname,
                           "accountType": accountTypeIndex] as [String: Any]
             
-            Database.database().reference().child("users").child(uid).updateChildValues(values) { error, ref in
-                DispatchQueue.main.async { [weak self] in
-                    self?.dismiss(animated: true, completion: nil)
+            if accountTypeIndex == 1 {
+                let geofire = GeoFire(firebaseRef: REF_DRIVER_LOCATIONS)
+                
+                guard let location = self?.location else { return }
+                
+                geofire.setLocation(location, forKey: uid) { [weak self] error in
+                    self?.uploadUserDataAndShowHomeController(values: values, uid: uid)
                 }
             }
+            
+            self?.uploadUserDataAndShowHomeController(values: values, uid: uid)
         }
     }
     
     // MARK: - Helpers
+    
+    private func uploadUserDataAndShowHomeController(values: [String: Any], uid: String) {
+        REF_USERS.child(uid).updateChildValues(values) { error, ref in
+            DispatchQueue.main.async { [weak self] in
+                self?.dismiss(animated: true, completion: nil)
+            }
+        }
+    }
     
     private func configureUI() {
         

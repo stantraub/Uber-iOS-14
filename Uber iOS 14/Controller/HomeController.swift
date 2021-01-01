@@ -14,11 +14,17 @@ class HomeController: UIViewController {
     // MARK: - Properties
     
     private let mapView = MKMapView()
-    private let locationManager = CLLocationManager()
+    private let locationManager = LocationHandler.shared.locationManager
     
     private let inputActivationView = LocationInputActivationView()
     private let locationInputView = LocationInputView()
     private let tableView = UITableView()
+    
+    private var user: User? {
+        didSet {
+            locationInputView.user = user
+        }
+    }
     
     private final let locationInputViewHeight: CGFloat = 200
     
@@ -30,9 +36,42 @@ class HomeController: UIViewController {
 //                signOut()
         checkIfUserIsLoggedIn()
         enableLocationServices()
+        fetchUserData()
     }
     
     // MARK: - API
+    
+    private func fetchUserData() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        
+        Service.fetchUserData(uid: uid) { [weak self] user in
+            self?.user = user
+        }
+    }
+    
+    private func fetchDrivers() {
+        guard let location = locationManager?.location else { return }
+        Service.fetchDrivers(location: location) { driver in
+            guard let coordinate = driver.location?.coordinate else { return }
+            let annotation = DriverAnnotation(uid: driver.uid, coordinate: coordinate)
+            
+            var driverIsVisible: Bool {
+                return self.mapView.annotations.contains { annotation -> Bool in
+                    guard let driverAnno = annotation as? DriverAnnotation else { return false }
+                    if driverAnno.uid == driver.uid  {
+                        /// update position here
+                        driverAnno.updateAnnotationPosition(withCoordinate: coordinate)
+                        return true
+                    }
+                    return false
+                }
+            }
+            
+            if !driverIsVisible {
+                self.mapView.addAnnotation(annotation)
+            }
+        }
+    }
     
     private func checkIfUserIsLoggedIn() {
         if Auth.auth().currentUser?.uid == nil {
@@ -47,6 +86,11 @@ class HomeController: UIViewController {
     private func signOut() {
         do {
             try Auth.auth().signOut()
+            DispatchQueue.main.async { [weak self] in
+                let nav = UINavigationController(rootViewController: LoginController())
+                nav.modalPresentationStyle = .fullScreen
+                self?.present(nav, animated: true, completion: nil)
+            }
         } catch {
             print("DEBUG: Error signing out with: \(error.localizedDescription)")
         }
@@ -76,6 +120,7 @@ class HomeController: UIViewController {
         
         mapView.showsUserLocation = true
         mapView.userTrackingMode = .follow
+        mapView.delegate = self
     }
     
     private func configureLocationInputView() {
@@ -112,33 +157,25 @@ class HomeController: UIViewController {
 
 // MARK: - LocationServices
 
-extension HomeController: CLLocationManagerDelegate {
+extension HomeController  {
     func enableLocationServices() {
-        locationManager.delegate = self
-        
         switch CLLocationManager.authorizationStatus() {
         case .notDetermined:
             print("DEBUG: Not determined..")
-            locationManager.requestWhenInUseAuthorization()
+            locationManager?.requestWhenInUseAuthorization()
         case .restricted, .denied:
             break
         case .authorizedAlways:
             print("DEBUG: Auth always..")
-            locationManager.startUpdatingLocation()
-            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager?.startUpdatingLocation()
+            locationManager?.desiredAccuracy = kCLLocationAccuracyBest
         case .authorizedWhenInUse:
             print("Auth when in use..")
-            locationManager.requestAlwaysAuthorization()
+            locationManager? .requestAlwaysAuthorization()
         @unknown default:
             break
         }
-    }
-    
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        if status == .authorizedWhenInUse {
-            locationManager.requestAlwaysAuthorization()
-        }
-    }
+    } 
 }
 
 // MARK: - UITableViewDelegate/DataSource
@@ -159,6 +196,20 @@ extension HomeController: UITableViewDelegate, UITableViewDataSource {
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: LocationCell.identifier, for: indexPath) as! LocationCell
         return cell
+    }
+}
+
+// MARK: - MKMapViewDelegate
+
+extension HomeController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if let annotation = annotation as? DriverAnnotation {
+            let view = MKAnnotationView(annotation: annotation, reuseIdentifier: DriverAnnotation.identifier)
+            view.image = #imageLiteral(resourceName: "chevron-sign-to-right")
+            return view
+        }
+        
+        return nil
     }
 }
 
